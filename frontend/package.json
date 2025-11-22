@@ -9,10 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@ai-sdk/react": "^2.0.99",
+    "@ai-sdk/react": "^2.0.100",
     "@cityofzion/neon-dappkit": "^1.0.0",
     "@cityofzion/neon-dappkit-types": "^1.0.0",
-    "ai": "^5.0.99",
+    "ai": "^5.0.100",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.24",
     "lucide-react": "^0.554.0",
@@ -20,7 +20,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.4.0",
-    "vercel": "^48.10.10"
+    "vercel": "^48.10.10",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20",

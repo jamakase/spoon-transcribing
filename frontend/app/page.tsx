@@ -1,10 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Play, MoreHorizontal, Calendar, Clock, Activity, HardDrive, Cpu, Trash2, Edit, Share2, Sparkles, Bookmark, History, Lock } from 'lucide-react';
+import { Play, MoreHorizontal, Calendar, Clock, Activity, HardDrive, Cpu, Trash2, Edit, Share2, Sparkles, Bookmark, History, Lock, Send, X, Loader2 } from 'lucide-react';
 import { api, Meeting } from './services/api';
 import { useNeoWallet } from './context/NeoWalletContext';
+import { useChat } from '@ai-sdk/react';
+import { TextStreamChatTransport } from 'ai';
+
+const API_BASE_URL = '/api/proxy';
 
 const STATS = [
   { label: 'Total Recordings', value: '124', sub: 'ARCHIVED', icon: HardDrive },
@@ -50,6 +54,24 @@ export default function Home() {
   const [activeMenu, setActiveMenu] = useState<string | number | null>(null);
   const [meetings, setMeetings] = useState<UIMeeting[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  const [chatInput, setChatInput] = useState('');
+  const { messages, sendMessage, status } = useChat({
+    // transport: new TextStreamChatTransport({ api: `http://localhost:8001/api/chat` }),
+    transport: new TextStreamChatTransport({ api: `https://api.transcribe.aprivai.com/api/chat` }),
+
+  });
+  const isChatLoading = status === 'streaming' || status === 'submitted';
+
+  const onChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (chatInput.trim()) {
+      sendMessage({ text: chatInput });
+      setChatInput('');
+    }
+  };
 
   useEffect(() => {
     async function fetchMeetings() {
@@ -83,6 +105,20 @@ export default function Home() {
     window.addEventListener('click', handleClickOutside);
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
+
+  // Scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  // Open chat panel when there are messages
+  useEffect(() => {
+    if (messages.length > 0) {
+      setIsChatOpen(true);
+    }
+  }, [messages.length]);
 
   if (!isConnected) {
     return (
@@ -247,36 +283,104 @@ export default function Home() {
       {/* AI Chat Interface */}
       <div className="fixed bottom-0 left-0 w-full pl-72 z-20 pointer-events-none">
         <div className="max-w-4xl mx-auto px-8 pb-8 pointer-events-auto">
+          {/* Chat Messages Panel */}
+          {isChatOpen && messages.length > 0 && (
+            <div className="bg-slate-950 border border-slate-800 rounded-lg mb-3 shadow-2xl animate-fade-in-up">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
+                <span className="text-xs font-mono text-neon-yellow uppercase tracking-wider">AI Assistant</span>
+                <button
+                  onClick={() => setIsChatOpen(false)}
+                  className="p-1 text-slate-500 hover:text-white transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div
+                ref={chatContainerRef}
+                className="max-h-64 overflow-y-auto p-4 space-y-4"
+              >
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] px-4 py-2 rounded-lg text-sm ${
+                        message.role === 'user'
+                          ? 'bg-neon-yellow text-black'
+                          : 'bg-slate-800 text-slate-200'
+                      }`}
+                    >
+                      {message.parts?.map((part, i) =>
+                        part.type === 'text' ? <span key={i}>{part.text}</span> : null
+                      ) || (message as any).content}
+                    </div>
+                  </div>
+                ))}
+                {isChatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800 text-slate-200 px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Thinking...
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 mb-3 animate-fade-in-up delay-100">
             <span className="text-xs font-bold text-neon-yellow uppercase tracking-wider">Recommended:</span>
-            <button className="flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs text-slate-300 hover:border-neon-yellow hover:text-neon-yellow transition-colors">
+            <button
+              onClick={() => sendMessage({ text: 'Catch me up on my recent meetings' })}
+              className="flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs text-slate-300 hover:border-neon-yellow hover:text-neon-yellow transition-colors"
+            >
               <Clock className="w-3 h-3" /> Catch Me Up
             </button>
-            <button className="flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs text-slate-300 hover:border-neon-yellow hover:text-neon-yellow transition-colors">
+            <button
+              onClick={() => sendMessage({ text: 'What are the key product insights from my meetings?' })}
+              className="flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-xs text-slate-300 hover:border-neon-yellow hover:text-neon-yellow transition-colors"
+            >
               <Sparkles className="w-3 h-3" /> Product Insights
             </button>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-2 flex items-center gap-2 shadow-2xl animate-fade-in-up delay-200">
+          <form id="chat-form" onSubmit={onChatSubmit} className="bg-slate-950 border border-slate-800 rounded-lg p-2 flex items-center gap-2 shadow-2xl animate-fade-in-up delay-200">
             <div className="pl-3">
               <Sparkles className="w-5 h-5 text-neon-yellow" />
             </div>
-            <input 
-              type="text" 
-              placeholder="Ask anything about your meetings..." 
+            <input
+              id="chat-input"
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask anything about your meetings..."
               className="flex-1 bg-transparent border-none text-white placeholder-slate-500 focus:ring-0 focus:outline-none py-3"
             />
-            <button className="bg-neon-yellow hover:bg-[#b3e600] text-black font-bold px-6 py-2 rounded transition-colors text-sm">
-              Ask AI Agent
+            <button
+              type="submit"
+              disabled={isChatLoading || !chatInput?.trim()}
+              className="bg-neon-yellow hover:bg-[#b3e600] text-black font-bold px-6 py-2 rounded transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isChatLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              Ask AI
             </button>
             <div className="h-8 w-px bg-slate-800 mx-1" />
-            <button className="p-2 text-slate-500 hover:text-white transition-colors">
+            <button type="button" className="p-2 text-slate-500 hover:text-white transition-colors">
               <Bookmark className="w-5 h-5" />
             </button>
-            <button className="p-2 text-slate-500 hover:text-white transition-colors">
+            <button
+              type="button"
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className={`p-2 transition-colors ${isChatOpen ? 'text-neon-yellow' : 'text-slate-500 hover:text-white'}`}
+            >
               <History className="w-5 h-5" />
             </button>
-          </div>
+          </form>
         </div>
       </div>
     </div>

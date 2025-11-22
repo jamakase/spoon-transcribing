@@ -1,4 +1,3 @@
-import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -12,9 +11,28 @@ from app.models.chat import Conversation, ChatMessage
 router = APIRouter()
 
 
+class MessagePart(BaseModel):
+    type: str
+    text: str | None = None
+
+    class Config:
+        extra = "allow"
+
+
 class Message(BaseModel):
     role: str
-    content: str
+    content: str | None = None
+    parts: list[MessagePart] | None = None
+
+    class Config:
+        extra = "allow"
+
+    def get_text(self) -> str:
+        if self.content:
+            return self.content
+        if self.parts:
+            return "".join(part.text for part in self.parts if part.type == "text" and part.text)
+        return ""
 
 
 class ChatRequest(BaseModel):
@@ -30,7 +48,7 @@ async def chat(request: ChatRequest):
     user_message = ""
     for msg in reversed(request.messages):
         if msg.role == "user":
-            user_message = msg.content
+            user_message = msg.get_text()
             break
 
     if not user_message:
@@ -51,11 +69,12 @@ async def chat(request: ChatRequest):
         try:
             response = await agent.run(user_message)
 
+            # Stream plain text chunks for AI SDK v5 TextStreamChatTransport
             chunks = [response[i:i+50] for i in range(0, len(response), 50)]
 
             for chunk in chunks:
-                escaped = json.dumps(chunk)
-                yield f'0:{escaped}\n'
+                yield chunk
+
             try:
                 async with async_session() as session:
                     session.add(ChatMessage(conversation_id=conversation_id, role="assistant", content=response))
@@ -64,15 +83,11 @@ async def chat(request: ChatRequest):
                 pass
 
         except Exception as e:
-            error_msg = json.dumps(str(e))
-            yield f'0:{error_msg}\n'
+            yield f"Error: {str(e)}"
 
     return StreamingResponse(
         generate(),
-        media_type="text/plain",
-        headers={
-            "X-Vercel-AI-Data-Stream": "v1",
-        }
+        media_type="text/plain; charset=utf-8",
     )
 
 
@@ -84,7 +99,7 @@ async def chat_non_streaming(request: ChatRequest):
     user_message = ""
     for msg in reversed(request.messages):
         if msg.role == "user":
-            user_message = msg.content
+            user_message = msg.get_text()
             break
 
     if not user_message:

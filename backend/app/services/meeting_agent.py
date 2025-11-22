@@ -7,9 +7,10 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models.meeting import Meeting, Transcript, Summary, Participant
-from app.tasks.transcription import get_sync_session, transcribe_audio_task
-from app.tasks.summarization import generate_summary_task
+from app.tasks.transcription import get_sync_session
 from app.tasks.email import send_followup_task
+from app.services.recall import recall_service
+import redis
 
 
 class ListMeetingsTool(BaseTool):
@@ -85,36 +86,37 @@ class GetMeetingDetailsTool(BaseTool):
             session.close()
 
 
-class StartTranscriptionTool(BaseTool):
-    name: str = "start_transcription"
-    description: str = "Start transcription process for a meeting. Requires meeting_id. This is an async task."
-    meeting_id: int = Field(description="The ID of the meeting to transcribe")
-    parameters: dict = Field(default_factory=dict, description="Tool parameters")
-
-    async def execute(self) -> str:
-        task = transcribe_audio_task.delay(self.meeting_id)
-        return f"Transcription started for meeting {self.meeting_id}. Task ID: {task.id}"
-
-
-class StartSummarizationTool(BaseTool):
-    name: str = "start_summarization"
-    description: str = "Generate summary for a transcribed meeting. Requires meeting_id. Meeting must be transcribed first."
-    meeting_id: int = Field(description="The ID of the meeting to summarize")
-    parameters: dict = Field(default_factory=dict, description="Tool parameters")
+class GetLastDiscussionTool(BaseTool):
+    name: str = "get_last_discussion"
+    description: str = "Get what was discussed last time. Returns latest meeting summary or transcript snippet."
+    parameters: dict = Field(default_factory=dict, description="No parameters required")
 
     async def execute(self) -> str:
         session = get_sync_session()
         try:
             result = session.execute(
-                select(Transcript).where(Transcript.meeting_id == self.meeting_id)
+                select(Meeting)
+                .options(
+                    selectinload(Meeting.transcript),
+                    selectinload(Meeting.summary)
+                )
+                .order_by(Meeting.created_at.desc())
+                .limit(1)
             )
-            transcript = result.scalar_one_or_none()
+            meeting = result.scalars().first()
 
-            if not transcript:
-                return f"Meeting {self.meeting_id} must be transcribed first."
+            if not meeting:
+                return "No meetings found."
 
-            task = generate_summary_task.delay(self.meeting_id)
-            return f"Summarization started for meeting {self.meeting_id}. Task ID: {task.id}"
+            header = f"Latest meeting: {meeting.title} (ID: {meeting.id}, Status: {meeting.status})\n"
+            if meeting.summary and meeting.summary.text:
+                return header + "\nSummary:\n" + meeting.summary.text
+            if meeting.transcript and meeting.transcript.text:
+                text = meeting.transcript.text
+                snippet = text[:2000]
+                suffix = "..." if len(text) > 2000 else ""
+                return header + "\nTranscript snippet:\n" + snippet + suffix
+            return header + "\nNo summary or transcript available yet."
         finally:
             session.close()
 
@@ -143,31 +145,39 @@ class SendFollowupEmailTool(BaseTool):
             session.close()
 
 
-class CreateMeetingTool(BaseTool):
-    name: str = "create_meeting"
-    description: str = "Create a new meeting with audio URL. Returns the meeting ID."
-    title: str = Field(description="Title of the meeting")
-    audio_url: str = Field(description="URL to the audio file")
-    participant_names: str = Field(default="", description="Comma-separated list of participant names")
-    participant_emails: str = Field(default="", description="Comma-separated list of participant emails")
+class StartRecallMeetingTool(BaseTool):
+    name: str = "start_recall_meeting"
+    description: str = "Start a meeting by providing the Zoom/meeting link. Launches Recall and returns meeting ID."
+    meeting_url: str = Field(description="The meeting URL (e.g., Zoom link)")
+    title: str = Field(default=None, description="Optional meeting title")
     parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
         try:
-            meeting = Meeting(title=self.title, audio_url=self.audio_url)
+            meeting = Meeting(title=self.title or "Meeting")
             session.add(meeting)
             session.flush()
 
-            names = [n.strip() for n in self.participant_names.split(",") if n.strip()]
-            emails = [e.strip() for e in self.participant_emails.split(",") if e.strip()]
-
-            for name, email in zip(names, emails):
-                participant = Participant(meeting_id=meeting.id, name=name, email=email)
-                session.add(participant)
-
-            session.commit()
-            return f"Meeting created with ID: {meeting.id}"
+            try:
+                data = await recall_service.start_bot(
+                    meeting_url=self.meeting_url,
+                    bot_name=(self.title or "Meeting Bot"),
+                    external_id=str(meeting.id),
+                )
+                try:
+                    bot_id = data.get("id") if isinstance(data, dict) else None
+                    if bot_id:
+                        r = redis.Redis.from_url(settings.redis_url)
+                        r.set(f"recall:bot:{bot_id}", str(meeting.id))
+                except Exception:
+                    pass
+                meeting.status = "recording"
+                session.commit()
+                return f"Meeting created and Recall started. ID: {meeting.id}"
+            except Exception as e:
+                session.rollback()
+                return f"Failed to start Recall: {str(e)}"
         finally:
             session.close()
 
@@ -176,32 +186,30 @@ def get_meeting_tools():
     return [
         ListMeetingsTool(),
         GetMeetingDetailsTool(meeting_id=0),
-        StartTranscriptionTool(meeting_id=0),
-        StartSummarizationTool(meeting_id=0),
         SendFollowupEmailTool(meeting_id=0),
-        CreateMeetingTool(title="", audio_url=""),
+        GetLastDiscussionTool(),
+        StartRecallMeetingTool(meeting_url=""),
     ]
 
 
 def create_meeting_agent():
     llm = ChatBot(
-        model_name="openai/gpt-3.5-turbo",
+        model_name="openai/gpt-4.1",
         llm_provider="openrouter",
         llm_api_key=settings.openrouter_api_key,
     )
     agent = SpoonReactAI(
         llm=llm,
         tools=get_meeting_tools(),
-        system_prompt="""You are a meeting assistant that helps users manage their meetings, transcriptions, and summaries.
+        system_prompt="""You are a meeting assistant that helps users manage and recall meetings.
 
 You can:
+- Create a meeting by providing a Zoom/meeting link (starts Recall)
 - List all meetings
 - Get details of a specific meeting (transcript, summary, action items)
-- Start transcription for a meeting
-- Generate summaries from transcripts
+- Tell the user what was discussed last time (latest meeting summary or transcript)
 - Send follow-up emails to participants
 
-Always be helpful and concise. When a user asks about meetings, first list them if they don't specify an ID.
-When they want to process a meeting, guide them through: transcribe -> summarize -> send follow-up."""
+Always be helpful and concise. When a user asks about meetings, list them if no ID is specified. When they share a link, start a new meeting recording via Recall."""
     )
     return agent

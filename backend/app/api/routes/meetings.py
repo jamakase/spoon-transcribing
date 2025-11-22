@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
-from app.models.meeting import Meeting, Participant, Transcript, Summary
+from app.models.meeting import Meeting, Participant, Summary
 from app.schemas.meeting import (
     MeetingCreate,
     MeetingResponse,
@@ -14,8 +14,8 @@ from app.schemas.meeting import (
     StatusResponse,
     FollowupRequest,
 )
-from app.tasks.transcription import transcribe_audio_task
-from app.tasks.summarization import generate_summary_task
+from app.services.recall import recall_service
+import redis
 from app.tasks.email import send_followup_task
 
 router = APIRouter()
@@ -23,25 +23,13 @@ router = APIRouter()
 
 @router.post("", response_model=MeetingResponse)
 async def create_meeting(
-    title: str = Form(...),
-    audio_url: str | None = Form(None),
-    audio_file: UploadFile | None = File(None),
+    meeting_url: str = Form(...),
+    title: str | None = Form(None),
     participant_names: list[str] = Form([]),
     participant_emails: list[str] = Form([]),
     db: AsyncSession = Depends(get_db)
 ):
-    if not audio_url and not audio_file:
-        raise HTTPException(status_code=400, detail="Either audio_url or audio_file is required")
-
-    meeting = Meeting(title=title, audio_url=audio_url)
-
-    if audio_file:
-        os.makedirs(settings.upload_dir, exist_ok=True)
-        file_path = os.path.join(settings.upload_dir, f"{audio_file.filename}")
-        with open(file_path, "wb") as f:
-            content = await audio_file.read()
-            f.write(content)
-        meeting.audio_file_path = file_path
+    meeting = Meeting(title=title or "Meeting", audio_url=None)
 
     db.add(meeting)
     await db.flush()
@@ -56,10 +44,33 @@ async def create_meeting(
 
     result = await db.execute(
         select(Meeting)
-        .options(selectinload(Meeting.participants))
+        .options(
+            selectinload(Meeting.participants),
+            selectinload(Meeting.transcript),
+            selectinload(Meeting.summary),
+        )
         .where(Meeting.id == meeting.id)
     )
     meeting = result.scalar_one()
+
+    try:
+        data = await recall_service.start_bot(
+            meeting_url=meeting_url,
+            bot_name=(title or "Meeting Bot"),
+            external_id=str(meeting.id),
+        )
+        try:
+            bot_id = data.get("id")
+            if bot_id:
+                r = redis.Redis.from_url(settings.redis_url)
+                r.set(f"recall:bot:{bot_id}", str(meeting.id))
+        except Exception:
+            pass
+        meeting.status = "recording"
+        await db.flush()
+        await db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     return meeting
 
@@ -104,36 +115,6 @@ async def delete_meeting(meeting_id: int, db: AsyncSession = Depends(get_db)):
     return {"status": "deleted", "meeting_id": meeting_id}
 
 
-@router.post("/{meeting_id}/transcribe")
-async def start_transcription(meeting_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-    meeting = result.scalar_one_or_none()
-
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
-    task = transcribe_audio_task.delay(meeting_id)
-
-    return {"status": "transcription_started", "meeting_id": meeting_id, "task_id": task.id}
-
-
-@router.post("/{meeting_id}/summarize")
-async def start_summarization(meeting_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-    meeting = result.scalar_one_or_none()
-
-    if not meeting:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-
-    result = await db.execute(select(Transcript).where(Transcript.meeting_id == meeting_id))
-    transcript = result.scalar_one_or_none()
-
-    if not transcript:
-        raise HTTPException(status_code=400, detail="Meeting must be transcribed first")
-
-    task = generate_summary_task.delay(meeting_id)
-
-    return {"status": "summarization_started", "meeting_id": meeting_id, "task_id": task.id}
 
 
 @router.get("/{meeting_id}/status", response_model=StatusResponse)

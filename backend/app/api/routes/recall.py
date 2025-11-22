@@ -5,6 +5,7 @@ import json
 import redis
 
 from app.database import get_db
+from app.config import settings
 from app.models.meeting import Meeting
 from app.tasks.transcription import transcribe_audio_task, transcribe_audio_from_url_task
 from app.services.recall import recall_service
@@ -14,35 +15,7 @@ from app.services.transcription import download_audio
 router = APIRouter()
 
 
-class StartRecallRequest(BaseModel):
-    url: str
-    title: str | None = None
-
-
-@router.post("/start")
-async def start_recall(request: StartRecallRequest, db: AsyncSession = Depends(get_db)):
-    try:
-        meeting = Meeting(title=request.title or "Meeting")
-        db.add(meeting)
-        await db.flush()
-        await db.commit()
-        await db.refresh(meeting)
-
-        data = await recall_service.start_bot(
-            meeting_url=request.url,
-            bot_name=request.title or "Meeting Bot",
-            external_id=str(meeting.id),
-        )
-        try:
-            bot_id = data.get("id")
-            if bot_id:
-                r = redis.Redis.from_url(settings.redis_url)
-                r.set(f"recall:bot:{bot_id}", str(meeting.id))
-        except Exception:
-            pass
-        return {"status": "accepted", "meeting_id": meeting.id, "bot": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+ 
 
 
 @router.post("/webhook")

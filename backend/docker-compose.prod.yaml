@@ -4,8 +4,6 @@ services:
     command:
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
@@ -17,7 +15,7 @@ services:
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/spoon/traefik:/etc/traefik
+      - /home/user1/traefik:/etc/traefik
     restart: unless-stopped
   postgres:
     image: postgres:15
@@ -50,6 +48,12 @@ services:
       - redis
     labels:
       - "traefik.enable=true"
+      # HTTP router - redirects to HTTPS
+      - "traefik.http.routers.api-http.rule=Host(`api.transcribe.aprivai.com`)"
+      - "traefik.http.routers.api-http.entrypoints=web"
+      - "traefik.http.routers.api-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      # HTTPS router
       - "traefik.http.routers.api.rule=Host(`api.transcribe.aprivai.com`)"
       - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"

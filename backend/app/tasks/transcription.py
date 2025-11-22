@@ -63,6 +63,11 @@ def transcribe_audio_task(self, meeting_id: int):
         meeting.status = "transcribed"
         session.commit()
 
+        try:
+            celery_app.send_task("app.tasks.summarization.generate_summary_task", args=[meeting_id])
+        except Exception:
+            pass
+
         return {"status": "success", "meeting_id": meeting_id}
 
     except Exception as e:
@@ -95,7 +100,7 @@ def transcribe_audio_from_url_task(self, meeting_id: int, source_url: str):
 
         file_path = asyncio.run(download_audio(source_url, meeting_id))
         meeting.audio_file_path = file_path
-        meeting.audio_url = None
+        meeting.audio_url = source_url
         session.commit()
 
         result = transcribe_audio_file(file_path)
@@ -116,6 +121,11 @@ def transcribe_audio_from_url_task(self, meeting_id: int, source_url: str):
 
         meeting.status = "transcribed"
         session.commit()
+
+        try:
+            celery_app.send_task("app.tasks.summarization.generate_summary_task", args=[meeting_id])
+        except Exception:
+            pass
 
         return {"status": "success", "meeting_id": meeting_id}
 

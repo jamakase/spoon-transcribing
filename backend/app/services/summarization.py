@@ -1,11 +1,16 @@
 import asyncio
 from spoon_ai.agents import SpoonReactAI
 from spoon_ai.chat import ChatBot
+from app.config import settings
 
 
 async def generate_meeting_summary(transcript_text: str) -> dict:
     agent = SpoonReactAI(
-        llm=ChatBot(model_name="gpt-4.1", llm_provider="openai")
+        llm=ChatBot(
+            model_name="openai/gpt-4.1",
+            llm_provider="openrouter",
+            llm_api_key=settings.openrouter_api_key,
+        )
     )
 
     prompt = f"""Analyze the following meeting transcript and provide:

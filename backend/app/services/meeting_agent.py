@@ -16,7 +16,7 @@ import redis
 class ListMeetingsTool(BaseTool):
     name: str = "list_meetings"
     description: str = "List all meetings with their status. Returns meeting id, title, date, and status."
-    parameters: dict = Field(default_factory=dict, description="No parameters required")
+    parameters: dict = Field(default={"type": "object", "properties": {}}, description="No parameters required")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -41,7 +41,7 @@ class GetMeetingDetailsTool(BaseTool):
     name: str = "get_meeting_details"
     description: str = "Get detailed information about a specific meeting including transcript and summary. Requires meeting_id."
     meeting_id: int = Field(description="The ID of the meeting to retrieve")
-    parameters: dict = Field(default_factory=dict, description="Tool parameters")
+    parameters: dict = Field(default={"type": "object", "properties": {"meeting_id": {"type": "integer", "description": "The ID of the meeting to retrieve"}}, "required": ["meeting_id"]}, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -89,7 +89,7 @@ class GetMeetingDetailsTool(BaseTool):
 class GetLastDiscussionTool(BaseTool):
     name: str = "get_last_discussion"
     description: str = "Get what was discussed last time. Returns latest meeting summary or transcript snippet."
-    parameters: dict = Field(default_factory=dict, description="No parameters required")
+    parameters: dict = Field(default={"type": "object", "properties": {}}, description="No parameters required")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -126,7 +126,7 @@ class SendFollowupEmailTool(BaseTool):
     description: str = "Send follow-up email with meeting summary to all participants. Requires meeting_id."
     meeting_id: int = Field(description="The ID of the meeting")
     subject: str = Field(default=None, description="Optional custom email subject")
-    parameters: dict = Field(default_factory=dict, description="Tool parameters")
+    parameters: dict = Field(default={"type": "object", "properties": {"meeting_id": {"type": "integer", "description": "The ID of the meeting"}, "subject": {"type": "string", "description": "Optional custom email subject"}}, "required": ["meeting_id"]}, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -150,7 +150,7 @@ class StartRecallMeetingTool(BaseTool):
     description: str = "Start a meeting by providing the Zoom/meeting link. Launches Recall and returns meeting ID."
     meeting_url: str = Field(description="The meeting URL (e.g., Zoom link)")
     title: str = Field(default=None, description="Optional meeting title")
-    parameters: dict = Field(default_factory=dict, description="Tool parameters")
+    parameters: dict = Field(default={"type": "object", "properties": {"meeting_url": {"type": "string", "description": "The meeting URL (e.g., Zoom link)"}, "title": {"type": "string", "description": "Optional meeting title"}}, "required": ["meeting_url"]}, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()

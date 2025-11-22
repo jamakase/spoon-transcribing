@@ -123,12 +123,14 @@ async def recall_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             file_path = await download_audio(audio_url, meeting_id_int)
             meeting.audio_file_path = file_path
+            meeting.audio_url = audio_url
             meeting.status = "recording_completed"
             await db.flush()
             await db.commit()
             task = transcribe_audio_task.delay(meeting_id_int)
             task_id = str(task.id)
         except Exception:
+            meeting.audio_url = audio_url
             meeting.status = "recording_completed"
             await db.flush()
             await db.commit()
@@ -151,3 +153,78 @@ async def get_bot(bot_id: str):
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+from pydantic import BaseModel
+
+
+class IngestRecordingRequest(BaseModel):
+    recording_id: str
+    bot_id: str | None = None
+    download_url: str | None = None
+
+
+@router.post("/ingest-recording")
+async def ingest_recording(request: IngestRecordingRequest, db: AsyncSession = Depends(get_db)):
+    def _extract_download_url(rec: dict) -> str | None:
+        url = rec.get("download_url") or rec.get("audio_url") or rec.get("url")
+        if url:
+            return url
+        ms = rec.get("media_shortcuts") or {}
+        for key in ("audio_mixed", "video_mixed", "video_mixed_mp4"):
+            obj = ms.get(key)
+            if isinstance(obj, dict):
+                data = obj.get("data") or {}
+                dl = data.get("download_url")
+                if dl:
+                    return dl
+        return None
+
+    download_url = request.download_url
+    if not download_url:
+        try:
+            rec_data = await recall_service.get_recording(str(request.recording_id))
+            download_url = _extract_download_url(rec_data) or rec_data.get("download_url")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch recording: {str(e)}")
+
+    if not download_url:
+        raise HTTPException(status_code=400, detail="No download URL available for recording")
+
+    meeting_id = None
+    bot_id = request.bot_id
+    if bot_id:
+        try:
+            import redis
+            from app.config import settings
+            r = redis.Redis.from_url(settings.redis_url)
+            mapped = r.get(f"recall:bot:{bot_id}")
+            if mapped:
+                meeting_id = int(mapped.decode("utf-8"))
+        except Exception:
+            pass
+        if not meeting_id:
+            try:
+                bot_data = await recall_service.get_bot(str(bot_id))
+                ext = bot_data.get("external_id") or (bot_data.get("metadata") or {}).get("meeting_id")
+                if ext:
+                    meeting_id = int(str(ext))
+            except Exception:
+                pass
+
+    if not meeting_id:
+        raise HTTPException(status_code=400, detail="Unable to resolve meeting_id from bot_id")
+
+    from sqlalchemy import select as sql_select
+    result = await db.execute(sql_select(Meeting).where(Meeting.id == meeting_id))
+    meeting = result.scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    meeting.audio_url = download_url
+    meeting.status = "recording_completed"
+    await db.flush()
+    await db.commit()
+
+    task = transcribe_audio_from_url_task.delay(meeting_id, download_url)
+    return {"status": "accepted", "meeting_id": meeting_id, "task_id": str(task.id)}

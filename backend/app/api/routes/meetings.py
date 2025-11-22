@@ -17,6 +17,8 @@ from app.schemas.meeting import (
 from app.services.recall import recall_service
 import redis
 from app.tasks.email import send_followup_task
+from app.tasks.summarization import generate_summary_task
+from app.tasks.transcription import transcribe_audio_from_url_task
 
 router = APIRouter()
 
@@ -137,6 +139,22 @@ async def get_meeting_status(meeting_id: int, db: AsyncSession = Depends(get_db)
     )
 
 
+@router.get("/{meeting_id}/audio")
+async def get_meeting_audio(meeting_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+    meeting = result.scalar_one_or_none()
+
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    return {
+        "meeting_id": meeting_id,
+        "audio_url": meeting.audio_url,
+        "audio_file_path": meeting.audio_file_path,
+        "status": meeting.status,
+    }
+
+
 @router.post("/{meeting_id}/send-followup")
 async def send_followup(
     meeting_id: int,
@@ -162,3 +180,33 @@ async def send_followup(
     )
 
     return {"status": "email_sending", "meeting_id": meeting_id, "task_id": task.id}
+
+
+@router.post("/{meeting_id}/summarize")
+async def summarize_meeting(meeting_id: int, db: AsyncSession = Depends(get_db)):
+    meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+    meeting = meeting_result.scalar_one_or_none()
+
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    from app.models.meeting import Transcript
+    transcript_result = await db.execute(select(Transcript).where(Transcript.meeting_id == meeting_id))
+    transcript = transcript_result.scalar_one_or_none()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Meeting must be transcribed first")
+
+    task = generate_summary_task.delay(meeting_id)
+    return {"status": "summarization_started", "meeting_id": meeting_id, "task_id": str(task.id)}
+
+
+@router.post("/{meeting_id}/transcribe_from_url")
+async def transcribe_from_url(meeting_id: int, source_url: str = Form(...), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+    meeting = result.scalar_one_or_none()
+
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    task = transcribe_audio_from_url_task.delay(meeting_id, source_url)
+    return {"status": "transcription_started", "meeting_id": meeting_id, "task_id": str(task.id)}

@@ -56,7 +56,7 @@ services:
       - "traefik.http.services.api.loadbalancer.server.port=8001"
     volumes:
       - uploads:/data/uploads
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
     restart: unless-stopped
 
   worker:
@@ -76,7 +76,7 @@ services:
       - redis
     volumes:
       - uploads:/data/uploads
-    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "-l", "info", "-P", "solo"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app.celery_app", "worker", "-l", "info", "-P", "solo"]
     restart: unless-stopped
 
   migrate:
@@ -89,7 +89,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/meetings
     depends_on:
       - postgres
-    command: ["alembic", "upgrade", "head"]
+    command: ["uv", "run", "alembic", "upgrade", "head"]
     restart: "no"
 
 volumes:

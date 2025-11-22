@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.tasks.summarization",
         "app.tasks.email",
         "app.tasks.zoom_bot",
+        "app.tasks.zoomrec",
     ]
 )
 

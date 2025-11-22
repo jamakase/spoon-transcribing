@@ -12,7 +12,9 @@ from app.database import get_db
 from app.models.meeting import Meeting
 from app.config import settings
 from app.tasks.transcription import transcribe_audio_task
-from app.tasks.zoom_bot import start_zoom_bot_task
+from app.services.zoom_bot import zoom_bot_service
+from app.tasks.zoom_bot import start_zoom_recording_task
+from app.tasks.zoomrec import start_zoomrec_task
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +73,18 @@ async def zoom_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     logger.info("✅ Signature verified")
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"❌ Failed to parse JSON payload: {str(e)}")
+        logger.error(f"Raw body: {raw_body}")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
     logger.info(f"📦 Full Payload: {json.dumps(payload, indent=2)}")
 
     event = payload.get("event")
     logger.info(f"📌 Event type: {event}")
+    logger.info(f"🔍 Available keys in payload: {list(payload.keys())}")
 
     # Handle meeting started event
     if event == "meeting.started":
@@ -106,21 +115,24 @@ async def zoom_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         logger.info(f"✅ Meeting created in DB with ID: {meeting.id}")
 
-        # Queue bot task
-        logger.info(f"🤖 Queuing bot start task for meeting {meeting.id}")
-        task = start_zoom_bot_task.delay(meeting.id, str(meeting_id), str(meeting_uuid))
-        logger.info(f"✅ Bot task queued with ID: {task.id}")
+        # Queue recording start task
+        logger.info(f"⏺️  Queuing recording start task for meeting {meeting.id}")
+        task = start_zoom_recording_task.delay(meeting.id, str(meeting_id), str(meeting_uuid))
+        logger.info(f"✅ Recording task queued with ID: {task.id}")
 
         return {"status": "accepted", "meeting_id": meeting.id, "task_id": str(task.id)}
 
-    # Handle recording completed event (legacy)
+    # Handle recording completed event
     elif event and "recording.completed" in event:
         logger.info("🎬 Recording completed event detected")
         obj = (payload.get("payload") or {}).get("object") or {}
         files = obj.get("recording_files") or []
         title = obj.get("topic") or "Zoom Meeting"
+        meeting_id = obj.get("id")
+        meeting_uuid = obj.get("uuid")
 
         logger.info(f"Recording files count: {len(files)}")
+        logger.info(f"Meeting ID: {meeting_id}, UUID: {meeting_uuid}")
 
         chosen = None
         for f in files:
@@ -142,15 +154,44 @@ async def zoom_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
         logger.info(f"✅ Found audio recording: {download_url}")
 
-        meeting = Meeting(title=title, audio_url=download_url)
-        db.add(meeting)
+        # Find existing meeting by Zoom UUID or create new one
+        if meeting_uuid:
+            from sqlalchemy import select as sql_select
+            existing_meeting = await db.execute(
+                sql_select(Meeting).where(Meeting.zoom_meeting_uuid == str(meeting_uuid))
+            )
+            meeting = existing_meeting.scalar_one_or_none()
+
+            if meeting:
+                logger.info(f"✅ Found existing meeting record with ID: {meeting.id}")
+                meeting.audio_url = download_url
+                meeting.status = "recording_completed"
+            else:
+                logger.info(f"⚠️  No existing meeting found for UUID {meeting_uuid}, creating new record")
+                meeting = Meeting(
+                    title=title,
+                    zoom_meeting_id=str(meeting_id) if meeting_id else None,
+                    zoom_meeting_uuid=str(meeting_uuid),
+                    audio_url=download_url,
+                    status="recording_completed"
+                )
+                db.add(meeting)
+        else:
+            # Fallback: create new meeting if no UUID
+            meeting = Meeting(
+                title=title,
+                audio_url=download_url,
+                status="recording_completed"
+            )
+            db.add(meeting)
+
         await db.flush()
         await db.commit()
         await db.refresh(meeting)
 
-        logger.info(f"✅ Meeting created with ID: {meeting.id}")
+        logger.info(f"✅ Meeting updated with recording URL, ID: {meeting.id}")
 
-        logger.info(f"🤖 Queuing transcription task")
+        logger.info(f"📝 Queuing transcription task")
         task = transcribe_audio_task.delay(meeting.id)
         logger.info(f"✅ Transcription task queued with ID: {task.id}")
 
@@ -205,3 +246,47 @@ async def zoom_oauth_callback(code: str | None = None):
         settings.zoom_refresh_token = refresh_token
 
     return {"status": "ok", "access_token_set": True}
+
+
+@router.get("/zak")
+async def get_zak(user_id: str = "me"):
+    zak = await zoom_bot_service.get_user_zak(user_id=user_id)
+    return {"zak": zak}
+
+
+def _b64url(data: bytes) -> str:
+    import base64
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+@router.get("/sdk/signature")
+async def get_meeting_sdk_signature(meeting_number: str, role: int = 0):
+    if not settings.zoom_sdk_key or not settings.zoom_sdk_secret:
+        raise HTTPException(status_code=500, detail="Zoom Meeting SDK not configured")
+    import json, time, hmac, hashlib
+    header = {"alg": "HS256", "typ": "JWT"}
+    iat = int(time.time())
+    exp = iat + 2 * 60 * 60
+    payload = {
+        "sdkKey": settings.zoom_sdk_key,
+        "mn": meeting_number,
+        "role": role,
+        "iat": iat,
+        "exp": exp,
+        "tokenExp": exp,
+    }
+    signing_input = _b64url(json.dumps(header).encode()) + "." + _b64url(json.dumps(payload).encode())
+    signature = hmac.new(settings.zoom_sdk_secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    jwt_token = signing_input + "." + _b64url(signature)
+    return {"signature": jwt_token, "sdkKey": settings.zoom_sdk_key}
+from pydantic import BaseModel
+
+class StartZoomRecRequest(BaseModel):
+    url: str
+    title: str | None = None
+    duration_minutes: int = 60
+
+
+@router.post("/zoomrec/start")
+async def zoomrec_start(request: StartZoomRecRequest, db: AsyncSession = Depends(get_db)):
+    raise HTTPException(status_code=501, detail="zoomrec disabled")

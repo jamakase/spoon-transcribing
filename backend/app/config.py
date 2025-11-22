@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     zoom_refresh_token: str = ""
     zoom_redirect_uri: str = ""
     zoom_skip_signature_verification: bool = True  # Set to True for local testing only
+    zoom_sdk_key: str = ""
+    zoom_sdk_secret: str = ""
+
+    zoomrec_image: str = "kastldratza/zoomrec:latest"
+    zoomrec_timezone: str = "UTC"
+    zoom_display_name: str = "Spoon Bot"
+
+    recall_api_key: str = ""
+    recall_region: str = "us-east-1"
+    recall_base_url: str = "https://api.recall.ai/v1"
+    recall_webhook_secret: str = ""
 
     class Config:
         env_file = ".env"

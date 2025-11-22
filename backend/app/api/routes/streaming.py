@@ -1,6 +1,6 @@
 """Routes for managing streaming transcription and Zoom bot."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.models.meeting import Meeting
 from app.tasks.zoom_bot import start_zoom_bot_task, stop_zoom_bot_task
+from app.services.streaming_transcription import streaming_transcription_service
+from app.tasks.zoom_bot import save_transcript_segment_task
 
 router = APIRouter()
 
@@ -133,3 +135,25 @@ async def get_meeting_status(meeting_id: int, db: AsyncSession = Depends(get_db)
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get meeting status: {str(e)}")
+
+
+@router.websocket("/ingest/{meeting_id}")
+async def ingest_audio(websocket: WebSocket, meeting_id: int):
+    await websocket.accept()
+
+    async def audio_stream():
+        while True:
+            try:
+                data = await websocket.receive_bytes()
+            except Exception:
+                break
+            yield data
+
+    async def on_transcript(text: str, metadata: dict):
+        save_transcript_segment_task.delay(meeting_id, text, metadata.get("timestamp", ""), metadata.get("confidence", 0.0))
+
+    try:
+        full_text = await streaming_transcription_service.transcribe_stream(audio_stream(), on_transcript)
+        await websocket.send_text(full_text)
+    finally:
+        await websocket.close()

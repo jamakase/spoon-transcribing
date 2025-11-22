@@ -23,6 +23,105 @@ def get_sync_session():
     return SessionLocal()
 
 
+@celery_app.task(bind=True, name="app.tasks.zoom_bot.start_zoom_recording_task")
+def start_zoom_recording_task(self, meeting_id: int, zoom_meeting_id: str, zoom_meeting_uuid: str):
+    """Start recording for a Zoom meeting via API.
+
+    Args:
+        meeting_id: Database meeting ID
+        zoom_meeting_id: Zoom meeting ID (numeric)
+        zoom_meeting_uuid: Zoom meeting UUID
+    """
+    print("=" * 80)
+    print(f"⏺️  START_ZOOM_RECORDING_TASK - Received")
+    print("=" * 80)
+    print(f"Meeting ID: {meeting_id}")
+    print(f"Zoom Meeting ID: {zoom_meeting_id}")
+    print(f"Zoom Meeting UUID: {zoom_meeting_uuid}")
+
+    logger.info("=" * 80)
+    logger.info(f"⏺️  START_ZOOM_RECORDING_TASK - Received")
+    logger.info("=" * 80)
+    logger.info(f"Meeting ID: {meeting_id}")
+    logger.info(f"Zoom Meeting ID: {zoom_meeting_id}")
+    logger.info(f"Zoom Meeting UUID: {zoom_meeting_uuid}")
+
+    session = get_sync_session()
+
+    try:
+        logger.info("📋 Fetching meeting from database...")
+        meeting = session.execute(
+            select(Meeting).where(Meeting.id == meeting_id)
+        ).scalar_one_or_none()
+
+        if not meeting:
+            logger.error(f"❌ Meeting {meeting_id} not found in database")
+            raise ValueError(f"Meeting {meeting_id} not found")
+
+        logger.info(f"✅ Found meeting: {meeting.title}")
+
+        # Mark meeting as recording
+        logger.info("📝 Updating meeting with recording status...")
+        from datetime import timezone
+        meeting.zoom_meeting_id = zoom_meeting_id
+        meeting.zoom_meeting_uuid = zoom_meeting_uuid
+        meeting.is_streaming = True
+        meeting.status = "recording"
+        session.commit()
+        logger.info("✅ Meeting status updated to 'recording'")
+
+        # Call Zoom API to start recording
+        logger.info("🚀 Calling Zoom API to start recording...")
+        try:
+            import asyncio
+            from app.config import settings
+
+            # Run async function in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    zoom_bot_service.start_meeting_recording(
+                        meeting_uuid=zoom_meeting_uuid,
+                    )
+                )
+                logger.info(f"✅ Recording started: {result}")
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"❌ Failed to start recording via Zoom API: {str(e)}", exc_info=True)
+            raise
+
+        logger.info("=" * 80)
+        logger.info("✅ TASK COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+
+        return {
+            "status": "success",
+            "meeting_id": meeting_id,
+            "zoom_meeting_id": zoom_meeting_id,
+        }
+
+    except Exception as e:
+        logger.error("=" * 80)
+        logger.error(f"❌ ERROR IN start_zoom_recording_task")
+        logger.error("=" * 80)
+        logger.error(f"Error: {str(e)}", exc_info=True)
+
+        meeting = session.execute(
+            select(Meeting).where(Meeting.id == meeting_id)
+        ).scalar_one_or_none()
+        if meeting:
+            meeting.status = "recording_failed"
+            session.commit()
+            logger.error(f"Meeting {meeting_id} marked as failed")
+        raise
+
+    finally:
+        session.close()
+        logger.info("🔒 Session closed")
+
+
 @celery_app.task(bind=True)
 def start_zoom_bot_task(self, meeting_id: int, zoom_meeting_id: str, zoom_meeting_uuid: str):
     """Start a bot in a Zoom meeting for real-time transcription.

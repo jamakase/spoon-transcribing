@@ -3,7 +3,6 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-import base64
 import aiohttp
 
 from app.config import settings
@@ -22,37 +21,59 @@ class ZoomBotService:
         self._token_expires_at: Optional[datetime] = None
 
     async def get_access_token(self) -> str:
-        """Get a valid Zoom API access token using Server-to-Server OAuth."""
+        """Get a valid Zoom API access token from OAuth."""
         from datetime import timezone
         now = datetime.now(timezone.utc)
         if self._access_token and self._token_expires_at and now < self._token_expires_at:
             logger.info("🔓 Using cached Zoom access token")
             return self._access_token
 
-        logger.info("🔑 Requesting new Zoom access token via Server-to-Server OAuth...")
+        # Use the OAuth access token from user authorization
+        if not settings.zoom_access_token:
+            raise RuntimeError("ZOOM_ACCESS_TOKEN not configured. User must authorize via OAuth first at /zoom/oauth/authorize")
 
-        if not settings.zoom_client_id or not settings.zoom_client_secret or not settings.zoom_account_id:
-            raise RuntimeError("Zoom server-to-server OAuth not configured: set ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_ACCOUNT_ID")
+        logger.info("🔐 Using OAuth access token from user authorization")
+        self._access_token = settings.zoom_access_token
+        self._token_expires_at = now + timedelta(seconds=self.TOKEN_EXPIRY)
+        return self._access_token
 
-        auth = base64.b64encode(f"{settings.zoom_client_id}:{settings.zoom_client_secret}".encode()).decode()
-        token_url = "https://zoom.us/oauth/token"
-        params = {
-            "grant_type": "account_credentials",
-            "account_id": settings.zoom_account_id,
+    async def start_meeting_recording(self, meeting_uuid: str) -> dict:
+        """Start recording for a Zoom meeting.
+
+        Args:
+            meeting_uuid: Zoom meeting UUID
+
+        Returns:
+            Response data from Zoom API
+        """
+        token = await self.get_access_token()
+        logger.info(f"🔐 Got Zoom access token: {token[:20]}...")
+
+        payload = {
+            "action": "start",
         }
 
+        logger.info(f"📤 Sending recording start request to Zoom API...")
+        logger.info(f"   Meeting UUID: {meeting_uuid}")
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, params=params, headers={"Authorization": f"Basic {auth}"}) as resp:
-                logger.info(f"   OAuth response status: {resp.status}")
-                if resp.status != 200:
-                    text = await resp.text()
-                    logger.error(f"❌ Failed to get Zoom access token: {text}")
-                    raise RuntimeError(f"Zoom token error: {text}")
-                data = await resp.json()
-                self._access_token = data["access_token"]
-                self._token_expires_at = now + timedelta(seconds=data.get("expires_in", self.TOKEN_EXPIRY))
-                logger.info(f"✅ New access token obtained, expires in {data.get('expires_in', self.TOKEN_EXPIRY)} seconds")
-                return self._access_token
+            try:
+                async with session.patch(
+                    f"{self.BASE_URL}/meetings/{meeting_uuid}/recordings/status",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as response:
+                    logger.info(f"📥 Zoom API response status: {response.status}")
+                    if response.status >= 400:
+                        text = await response.text()
+                        logger.error(f"❌ Zoom API error: {text}")
+                        raise RuntimeError(f"Zoom API error: {text}")
+                    data = await response.json()
+                    logger.info(f"✅ Recording started: {data}")
+                    return data
+            except Exception as e:
+                logger.error(f"❌ Zoom API error: {str(e)}", exc_info=True)
+                raise
 
     async def start_meeting_bot(
         self, meeting_id: str, meeting_uuid: str, bot_jid: str
@@ -109,6 +130,21 @@ class ZoomBotService:
                 resp.raise_for_status()
                 data = await resp.json()
                 return data.get("participants", [])
+
+    async def get_user_zak(self, user_id: str = "me") -> str:
+        token = await self.get_access_token()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.BASE_URL}/users/{user_id}/token",
+                params={"type": "zak"},
+                headers={"Authorization": f"Bearer {token}"},
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                zak = data.get("token") or data.get("zak")
+                if not zak:
+                    raise RuntimeError("No ZAK token returned")
+                return zak
 
 
 zoom_bot_service = ZoomBotService()

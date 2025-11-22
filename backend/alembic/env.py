@@ -8,6 +8,7 @@ from alembic import context
 from app.config import settings
 from app.database import Base
 from app.models.meeting import Meeting, Transcript, Summary, Participant
+from app.models.user_access import UserAccess
 from app.models.chat import Conversation, ChatMessage
 
 config = context.config

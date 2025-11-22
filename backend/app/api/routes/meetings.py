@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 from app.models.meeting import Meeting, Participant, Summary
+from app.models.user_access import UserAccess
 from app.schemas.meeting import (
     MeetingCreate,
     MeetingResponse,
@@ -17,7 +18,7 @@ from app.schemas.meeting import (
 from app.services.recall import recall_service
 import redis
 from app.tasks.email import send_followup_task
-from app.tasks.summarization import generate_summary_task
+from app.celery_app import celery_app
 from app.tasks.transcription import transcribe_audio_from_url_task
 
 router = APIRouter()
@@ -78,14 +79,28 @@ async def create_meeting(
 
 
 @router.get("", response_model=list[MeetingListResponse])
-async def list_meetings(db: AsyncSession = Depends(get_db)):
+async def list_meetings(db: AsyncSession = Depends(get_db), x_user_pubkey: str | None = Header(None, convert_underscores=False)):
+    if x_user_pubkey:
+        from sqlalchemy import select as sql_select
+        access_result = await db.execute(sql_select(UserAccess.meeting_id).where(UserAccess.pubkey == x_user_pubkey))
+        ids = [row[0] for row in access_result.all()]
+        if not ids:
+            return []
+        result = await db.execute(select(Meeting).where(Meeting.id.in_(ids)).order_by(Meeting.created_at.desc()))
+        meetings = result.scalars().all()
+        return meetings
     result = await db.execute(select(Meeting).order_by(Meeting.created_at.desc()))
     meetings = result.scalars().all()
     return meetings
 
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
-async def get_meeting(meeting_id: int, db: AsyncSession = Depends(get_db)):
+async def get_meeting(meeting_id: int, db: AsyncSession = Depends(get_db), x_user_pubkey: str | None = Header(None, convert_underscores=False)):
+    if x_user_pubkey:
+        from sqlalchemy import select as sql_select
+        chk = await db.execute(sql_select(UserAccess).where(UserAccess.pubkey == x_user_pubkey, UserAccess.meeting_id == meeting_id))
+        if not chk.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Forbidden")
     result = await db.execute(
         select(Meeting)
         .options(
@@ -155,6 +170,18 @@ async def get_meeting_audio(meeting_id: int, db: AsyncSession = Depends(get_db))
     }
 
 
+@router.post("/{meeting_id}/grant-access")
+async def grant_access(meeting_id: int, pubkey: str = Form(...), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+    meeting = result.scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    entry = UserAccess(pubkey=pubkey, meeting_id=meeting_id)
+    db.add(entry)
+    await db.commit()
+    return {"status": "ok", "meeting_id": meeting_id, "pubkey": pubkey}
+
+
 @router.post("/{meeting_id}/send-followup")
 async def send_followup(
     meeting_id: int,
@@ -196,7 +223,7 @@ async def summarize_meeting(meeting_id: int, db: AsyncSession = Depends(get_db))
     if not transcript:
         raise HTTPException(status_code=400, detail="Meeting must be transcribed first")
 
-    task = generate_summary_task.delay(meeting_id)
+    task = celery_app.send_task("app.tasks.summarization.generate_summary_task", args=[meeting_id])
     return {"status": "summarization_started", "meeting_id": meeting_id, "task_id": str(task.id)}
 
 

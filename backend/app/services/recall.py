@@ -24,6 +24,7 @@ class RecallService:
             "meeting_url": meeting_url,
             "recording_config": {
                 "video_mixed_mp4": {},
+                "audio_mixed_mp3": {},
             },
         }
         if bot_name:
@@ -124,6 +125,34 @@ class RecallService:
                     last_error = e
                     continue
             raise last_error if last_error else RuntimeError("recall get recording failed")
+
+    async def get_audio_mixed(self, recording_id: str) -> dict:
+        """Get audio mixed data - this is a placeholder that returns empty since
+        Recall API doesn't have this endpoint. Use get_bot() to get media_shortcuts instead."""
+        return {}
+
+    async def get_bot_audio_url(self, bot_id: str) -> str | None:
+        """Get the audio download URL from a bot's recordings via media_shortcuts."""
+        try:
+            bot_data = await self.get_bot(bot_id)
+            recordings = bot_data.get("recordings") or []
+            for rec in recordings:
+                # Try media_shortcuts first (correct Recall API structure)
+                ms = rec.get("media_shortcuts") or {}
+                for key in ("audio_mixed", "audio_mixed_mp3", "video_mixed", "video_mixed_mp4"):
+                    obj = ms.get(key)
+                    if isinstance(obj, dict):
+                        data = obj.get("data") or {}
+                        dl = data.get("download_url")
+                        if dl:
+                            return dl
+                # Fallback to direct download_url
+                url = rec.get("download_url") or rec.get("audio_url") or rec.get("url")
+                if url:
+                    return url
+            return None
+        except Exception:
+            return None
 
 
 recall_service = RecallService()

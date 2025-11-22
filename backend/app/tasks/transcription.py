@@ -8,6 +8,21 @@ from app.models.meeting import Meeting, Transcript
 from app.services.transcription import download_audio, transcribe_audio_file
 
 
+def _extract_download_url(rec: dict) -> str | None:
+    url = rec.get("download_url") or rec.get("audio_url") or rec.get("url")
+    if url:
+        return url
+    ms = rec.get("media_shortcuts") or {}
+    for key in ("audio_mixed", "video_mixed_mp4", "video_mixed"):
+        obj = ms.get(key)
+        if isinstance(obj, dict):
+            data = obj.get("data") or {}
+            dl = data.get("download_url")
+            if dl:
+                return dl
+    return None
+
+
 def get_sync_session():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -84,7 +99,7 @@ def transcribe_audio_task(self, meeting_id: int):
 
 
 @celery_app.task(bind=True)
-def transcribe_audio_from_url_task(self, meeting_id: int, source_url: str):
+def transcribe_audio_from_url_task(self, meeting_id: int, source_url: str, recording_id: str | None = None):
     session = get_sync_session()
 
     try:
@@ -98,9 +113,29 @@ def transcribe_audio_from_url_task(self, meeting_id: int, source_url: str):
         meeting.status = "transcribing"
         session.commit()
 
-        file_path = asyncio.run(download_audio(source_url, meeting_id))
+        # Always try to get a fresh URL from Recall API first since pre-signed URLs expire
+        from app.services.recall import recall_service
+
+        download_url = source_url
+        if recording_id:
+            try:
+                # Get fresh URL from recording endpoint
+                rec_data = asyncio.run(recall_service.get_recording(str(recording_id)))
+                fresh_url = _extract_download_url(rec_data) or rec_data.get("download_url")
+                if fresh_url:
+                    download_url = fresh_url
+            except Exception:
+                pass  # Fall back to source_url
+
+        try:
+            file_path = asyncio.run(download_audio(download_url, meeting_id))
+            meeting.audio_url = download_url
+        except Exception as e:
+            # If download fails, the URL may be expired
+            raise ValueError(f"Failed to download audio: {e}")
         meeting.audio_file_path = file_path
-        meeting.audio_url = source_url
+        if not meeting.audio_url:
+            meeting.audio_url = source_url
         session.commit()
 
         result = transcribe_audio_file(file_path)

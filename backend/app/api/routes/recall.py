@@ -88,26 +88,22 @@ async def recall_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     if not audio_url:
         audio_url = payload.get("audio_url") or payload.get("download_url")
 
-    if not audio_url:
-        if recording_id:
-            try:
-                rec_data = await recall_service.get_recording(str(recording_id))
-                url = _extract_download_url(rec_data)
-                if url:
-                    audio_url = url
-            except Exception:
-                pass
-        if not audio_url and bot_id:
-            try:
-                bot_data = await recall_service.get_bot(str(bot_id))
-                records = bot_data.get("recordings") or []
-                for r in records:
-                    url = _extract_download_url(r)
-                    if url:
-                        audio_url = url
-                        break
-            except Exception:
-                pass
+    if not audio_url and bot_id:
+        # Use the proper Recall API to get audio from bot's media_shortcuts
+        try:
+            audio_url = await recall_service.get_bot_audio_url(str(bot_id))
+        except Exception:
+            pass
+
+    if not audio_url and recording_id:
+        # Fallback: try to get from recording endpoint
+        try:
+            rec_data = await recall_service.get_recording(str(recording_id))
+            url = _extract_download_url(rec_data)
+            if url:
+                audio_url = url
+        except Exception:
+            pass
 
     if not audio_url:
         return {"status": "ignored"}
@@ -134,7 +130,7 @@ async def recall_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             meeting.status = "recording_completed"
             await db.flush()
             await db.commit()
-            task = transcribe_audio_from_url_task.delay(meeting_id_int, audio_url)
+            task = transcribe_audio_from_url_task.delay(meeting_id_int, audio_url, recording_id)
             task_id = str(task.id)
     else:
         meeting.status = "recording_completed"
@@ -162,6 +158,7 @@ class IngestRecordingRequest(BaseModel):
     recording_id: str
     bot_id: str | None = None
     download_url: str | None = None
+    meeting_id: int | None = None
 
 
 @router.post("/ingest-recording")
@@ -183,17 +180,33 @@ async def ingest_recording(request: IngestRecordingRequest, db: AsyncSession = D
     download_url = request.download_url
     if not download_url:
         try:
-            rec_data = await recall_service.get_recording(str(request.recording_id))
-            download_url = _extract_download_url(rec_data) or rec_data.get("download_url")
+            mixed = await recall_service.get_audio_mixed(str(request.recording_id))
+            if isinstance(mixed, list):
+                for m in mixed:
+                    u = m.get("download_url") or m.get("url")
+                    if u:
+                        download_url = u
+                        break
+            elif isinstance(mixed, dict):
+                items = mixed.get("items") or mixed.get("data") or []
+                if isinstance(items, list):
+                    for m in items:
+                        u = m.get("download_url") or m.get("url")
+                        if u:
+                            download_url = u
+                            break
+            if not download_url:
+                rec_data = await recall_service.get_recording(str(request.recording_id))
+                download_url = _extract_download_url(rec_data) or rec_data.get("download_url")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to fetch recording: {str(e)}")
 
     if not download_url:
         raise HTTPException(status_code=400, detail="No download URL available for recording")
 
-    meeting_id = None
+    meeting_id = request.meeting_id
     bot_id = request.bot_id
-    if bot_id:
+    if not meeting_id and bot_id:
         try:
             import redis
             from app.config import settings
@@ -226,5 +239,5 @@ async def ingest_recording(request: IngestRecordingRequest, db: AsyncSession = D
     await db.flush()
     await db.commit()
 
-    task = transcribe_audio_from_url_task.delay(meeting_id, download_url)
+    task = transcribe_audio_from_url_task.delay(meeting_id, download_url, request.recording_id)
     return {"status": "accepted", "meeting_id": meeting_id, "task_id": str(task.id)}

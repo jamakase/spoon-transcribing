@@ -11,7 +11,7 @@ class Meeting(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(255))
     date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    audio_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    audio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
 

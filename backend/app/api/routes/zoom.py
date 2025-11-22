@@ -55,151 +55,151 @@ def _verify_zoom_signature(signature: str | None, ts: str | None, body: bytes) -
     return is_valid
 
 
-@router.post("/webhook")
-async def zoom_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    raw_body = await request.body()
-    signature = request.headers.get("x-zm-signature")
-    timestamp = request.headers.get("x-zm-request-timestamp")
+# @router.post("/webhook")
+# async def zoom_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+#     raw_body = await request.body()
+#     signature = request.headers.get("x-zm-signature")
+#     timestamp = request.headers.get("x-zm-request-timestamp")
 
-    logger.info("=" * 80)
-    logger.info("📨 ZOOM WEBHOOK RECEIVED")
-    logger.info("=" * 80)
-    logger.info(f"Signature: {signature}")
-    logger.info(f"Timestamp: {timestamp}")
+#     logger.info("=" * 80)
+#     logger.info("📨 ZOOM WEBHOOK RECEIVED")
+#     logger.info("=" * 80)
+#     logger.info(f"Signature: {signature}")
+#     logger.info(f"Timestamp: {timestamp}")
 
-    if not _verify_zoom_signature(signature, timestamp, raw_body):
-        logger.error("❌ Invalid signature")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+#     if not _verify_zoom_signature(signature, timestamp, raw_body):
+#         logger.error("❌ Invalid signature")
+#         raise HTTPException(status_code=401, detail="Invalid signature")
 
-    logger.info("✅ Signature verified")
+#     logger.info("✅ Signature verified")
 
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.error(f"❌ Failed to parse JSON payload: {str(e)}")
-        logger.error(f"Raw body: {raw_body}")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+#     try:
+#         payload = await request.json()
+#     except Exception as e:
+#         logger.error(f"❌ Failed to parse JSON payload: {str(e)}")
+#         logger.error(f"Raw body: {raw_body}")
+#         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    logger.info(f"📦 Full Payload: {json.dumps(payload, indent=2)}")
+#     logger.info(f"📦 Full Payload: {json.dumps(payload, indent=2)}")
 
-    event = payload.get("event")
-    logger.info(f"📌 Event type: {event}")
-    logger.info(f"🔍 Available keys in payload: {list(payload.keys())}")
+#     event = payload.get("event")
+#     logger.info(f"📌 Event type: {event}")
+#     logger.info(f"🔍 Available keys in payload: {list(payload.keys())}")
 
-    # Handle meeting started event
-    if event == "meeting.started":
-        logger.info("🎤 Meeting started event detected")
-        obj = (payload.get("payload") or {}).get("object") or {}
-        meeting_id = obj.get("id")
-        meeting_uuid = obj.get("uuid")
-        topic = obj.get("topic") or "Zoom Meeting"
+#     # Handle meeting started event
+#     if event == "meeting.started":
+#         logger.info("🎤 Meeting started event detected")
+#         obj = (payload.get("payload") or {}).get("object") or {}
+#         meeting_id = obj.get("id")
+#         meeting_uuid = obj.get("uuid")
+#         topic = obj.get("topic") or "Zoom Meeting"
 
-        logger.info(f"Meeting ID: {meeting_id}")
-        logger.info(f"Meeting UUID: {meeting_uuid}")
-        logger.info(f"Topic: {topic}")
+#         logger.info(f"Meeting ID: {meeting_id}")
+#         logger.info(f"Meeting UUID: {meeting_uuid}")
+#         logger.info(f"Topic: {topic}")
 
-        if not meeting_id or not meeting_uuid:
-            logger.error("Missing meeting ID or UUID")
-            return {"status": "ignored", "reason": "Missing meeting ID or UUID"}
+#         if not meeting_id or not meeting_uuid:
+#             logger.error("Missing meeting ID or UUID")
+#             return {"status": "ignored", "reason": "Missing meeting ID or UUID"}
 
-        # Create meeting record
-        meeting = Meeting(
-            title=topic,
-            zoom_meeting_id=str(meeting_id),
-            zoom_meeting_uuid=str(meeting_uuid),
-        )
-        db.add(meeting)
-        await db.flush()
-        await db.commit()
-        await db.refresh(meeting)
+#         # Create meeting record
+#         meeting = Meeting(
+#             title=topic,
+#             zoom_meeting_id=str(meeting_id),
+#             zoom_meeting_uuid=str(meeting_uuid),
+#         )
+#         db.add(meeting)
+#         await db.flush()
+#         await db.commit()
+#         await db.refresh(meeting)
 
-        logger.info(f"✅ Meeting created in DB with ID: {meeting.id}")
+#         logger.info(f"✅ Meeting created in DB with ID: {meeting.id}")
 
-        # Queue recording start task
-        logger.info(f"⏺️  Queuing recording start task for meeting {meeting.id}")
-        task = start_zoom_recording_task.delay(meeting.id, str(meeting_id), str(meeting_uuid))
-        logger.info(f"✅ Recording task queued with ID: {task.id}")
+#         # Queue recording start task
+#         logger.info(f"⏺️  Queuing recording start task for meeting {meeting.id}")
+#         task = start_zoom_recording_task.delay(meeting.id, str(meeting_id), str(meeting_uuid))
+#         logger.info(f"✅ Recording task queued with ID: {task.id}")
 
-        return {"status": "accepted", "meeting_id": meeting.id, "task_id": str(task.id)}
+#         return {"status": "accepted", "meeting_id": meeting.id, "task_id": str(task.id)}
 
-    # Handle recording completed event
-    elif event and "recording.completed" in event:
-        logger.info("🎬 Recording completed event detected")
-        obj = (payload.get("payload") or {}).get("object") or {}
-        files = obj.get("recording_files") or []
-        title = obj.get("topic") or "Zoom Meeting"
-        meeting_id = obj.get("id")
-        meeting_uuid = obj.get("uuid")
+#     # Handle recording completed event
+#     elif event and "recording.completed" in event:
+#         logger.info("🎬 Recording completed event detected")
+#         obj = (payload.get("payload") or {}).get("object") or {}
+#         files = obj.get("recording_files") or []
+#         title = obj.get("topic") or "Zoom Meeting"
+#         meeting_id = obj.get("id")
+#         meeting_uuid = obj.get("uuid")
 
-        logger.info(f"Recording files count: {len(files)}")
-        logger.info(f"Meeting ID: {meeting_id}, UUID: {meeting_uuid}")
+#         logger.info(f"Recording files count: {len(files)}")
+#         logger.info(f"Meeting ID: {meeting_id}, UUID: {meeting_uuid}")
 
-        chosen = None
-        for f in files:
-            t = f.get("recording_type")
-            ft = f.get("file_type")
-            logger.info(f"  - Recording type: {t}, File type: {ft}")
-            if t == "audio_only" or ft == "M4A":
-                chosen = f
-                break
+#         chosen = None
+#         for f in files:
+#             t = f.get("recording_type")
+#             ft = f.get("file_type")
+#             logger.info(f"  - Recording type: {t}, File type: {ft}")
+#             if t == "audio_only" or ft == "M4A":
+#                 chosen = f
+#                 break
 
-        if not chosen:
-            logger.error("❌ No audio recording found in payload")
-            raise HTTPException(status_code=400, detail="No audio recording in payload")
+#         if not chosen:
+#             logger.error("❌ No audio recording found in payload")
+#             raise HTTPException(status_code=400, detail="No audio recording in payload")
 
-        download_url = chosen.get("download_url")
-        if not download_url:
-            logger.error("❌ No download_url in payload")
-            raise HTTPException(status_code=400, detail="No download_url in payload")
+#         download_url = chosen.get("download_url")
+#         if not download_url:
+#             logger.error("❌ No download_url in payload")
+#             raise HTTPException(status_code=400, detail="No download_url in payload")
 
-        logger.info(f"✅ Found audio recording: {download_url}")
+#         logger.info(f"✅ Found audio recording: {download_url}")
 
-        # Find existing meeting by Zoom UUID or create new one
-        if meeting_uuid:
-            from sqlalchemy import select as sql_select
-            existing_meeting = await db.execute(
-                sql_select(Meeting).where(Meeting.zoom_meeting_uuid == str(meeting_uuid))
-            )
-            meeting = existing_meeting.scalar_one_or_none()
+#         # Find existing meeting by Zoom UUID or create new one
+#         if meeting_uuid:
+#             from sqlalchemy import select as sql_select
+#             existing_meeting = await db.execute(
+#                 sql_select(Meeting).where(Meeting.zoom_meeting_uuid == str(meeting_uuid))
+#             )
+#             meeting = existing_meeting.scalar_one_or_none()
 
-            if meeting:
-                logger.info(f"✅ Found existing meeting record with ID: {meeting.id}")
-                meeting.audio_url = download_url
-                meeting.status = "recording_completed"
-            else:
-                logger.info(f"⚠️  No existing meeting found for UUID {meeting_uuid}, creating new record")
-                meeting = Meeting(
-                    title=title,
-                    zoom_meeting_id=str(meeting_id) if meeting_id else None,
-                    zoom_meeting_uuid=str(meeting_uuid),
-                    audio_url=download_url,
-                    status="recording_completed"
-                )
-                db.add(meeting)
-        else:
-            # Fallback: create new meeting if no UUID
-            meeting = Meeting(
-                title=title,
-                audio_url=download_url,
-                status="recording_completed"
-            )
-            db.add(meeting)
+#             if meeting:
+#                 logger.info(f"✅ Found existing meeting record with ID: {meeting.id}")
+#                 meeting.audio_url = download_url
+#                 meeting.status = "recording_completed"
+#             else:
+#                 logger.info(f"⚠️  No existing meeting found for UUID {meeting_uuid}, creating new record")
+#                 meeting = Meeting(
+#                     title=title,
+#                     zoom_meeting_id=str(meeting_id) if meeting_id else None,
+#                     zoom_meeting_uuid=str(meeting_uuid),
+#                     audio_url=download_url,
+#                     status="recording_completed"
+#                 )
+#                 db.add(meeting)
+#         else:
+#             # Fallback: create new meeting if no UUID
+#             meeting = Meeting(
+#                 title=title,
+#                 audio_url=download_url,
+#                 status="recording_completed"
+#             )
+#             db.add(meeting)
 
-        await db.flush()
-        await db.commit()
-        await db.refresh(meeting)
+#         await db.flush()
+#         await db.commit()
+#         await db.refresh(meeting)
 
-        logger.info(f"✅ Meeting updated with recording URL, ID: {meeting.id}")
+#         logger.info(f"✅ Meeting updated with recording URL, ID: {meeting.id}")
 
-        logger.info(f"📝 Queuing transcription task")
-        task = transcribe_audio_task.delay(meeting.id)
-        logger.info(f"✅ Transcription task queued with ID: {task.id}")
+#         logger.info(f"📝 Queuing transcription task")
+#         task = transcribe_audio_task.delay(meeting.id)
+#         logger.info(f"✅ Transcription task queued with ID: {task.id}")
 
-        return {"status": "accepted", "meeting_id": meeting.id, "task_id": str(task.id)}
+#         return {"status": "accepted", "meeting_id": meeting.id, "task_id": str(task.id)}
 
-    else:
-        logger.info(f"⏭️  Event not handled: {event}")
-        return {"status": "ignored", "reason": f"Event {event} not handled"}
+#     else:
+#         logger.info(f"⏭️  Event not handled: {event}")
+#         return {"status": "ignored", "reason": f"Event {event} not handled"}
 
 
 @router.get("/oauth/authorize")

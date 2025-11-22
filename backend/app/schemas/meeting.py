@@ -25,7 +25,7 @@ class MeetingCreate(BaseModel):
 class TranscriptResponse(BaseModel):
     id: int
     text: str
-    segments: dict | None = None
+    segments: dict | list | None = None
     created_at: datetime
 
     class Config:

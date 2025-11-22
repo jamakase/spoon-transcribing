@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     recall_api_key: str = ""
     recall_region: str = "us-east-1"
-    recall_base_url: str = "https://api.recall.ai/v1"
+    recall_base_url: str = "https://us-east-1.recall.ai/api/v1"
     recall_webhook_secret: str = ""
 
     class Config:

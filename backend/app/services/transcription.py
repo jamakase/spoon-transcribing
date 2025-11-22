@@ -38,12 +38,14 @@ def transcribe_audio_file(file_path: str) -> dict:
 
     return {
         "text": result["text"],
-        "segments": [
-            {
-                "start": seg["start"],
-                "end": seg["end"],
-                "text": seg["text"]
-            }
-            for seg in result["segments"]
-        ]
+        "segments": {
+            "items": [
+                {
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "text": seg["text"]
+                }
+                for seg in result["segments"]
+            ]
+        }
     }

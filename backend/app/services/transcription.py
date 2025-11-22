@@ -18,8 +18,12 @@ async def download_audio(url: str, meeting_id: int) -> str:
     os.makedirs(settings.upload_dir, exist_ok=True)
     file_path = os.path.join(settings.upload_dir, f"meeting_{meeting_id}.audio")
 
+    headers = {}
+    if ("zoom.us" in url or "zoom.us" in url.lower()) and settings.zoom_access_token:
+        headers["Authorization"] = f"Bearer {settings.zoom_access_token}"
+
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
+        async with session.get(url, headers=headers) as response:
             response.raise_for_status()
             with open(file_path, "wb") as f:
                 async for chunk in response.content.iter_chunked(8192):

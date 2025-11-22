@@ -5,6 +5,7 @@ from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.models.meeting import Meeting, Transcript, Summary, Participant
 from app.tasks.transcription import get_sync_session, transcribe_audio_task
 from app.tasks.summarization import generate_summary_task
@@ -14,6 +15,7 @@ from app.tasks.email import send_followup_task
 class ListMeetingsTool(BaseTool):
     name: str = "list_meetings"
     description: str = "List all meetings with their status. Returns meeting id, title, date, and status."
+    parameters: dict = Field(default_factory=dict, description="No parameters required")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -38,6 +40,7 @@ class GetMeetingDetailsTool(BaseTool):
     name: str = "get_meeting_details"
     description: str = "Get detailed information about a specific meeting including transcript and summary. Requires meeting_id."
     meeting_id: int = Field(description="The ID of the meeting to retrieve")
+    parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -86,6 +89,7 @@ class StartTranscriptionTool(BaseTool):
     name: str = "start_transcription"
     description: str = "Start transcription process for a meeting. Requires meeting_id. This is an async task."
     meeting_id: int = Field(description="The ID of the meeting to transcribe")
+    parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         task = transcribe_audio_task.delay(self.meeting_id)
@@ -96,6 +100,7 @@ class StartSummarizationTool(BaseTool):
     name: str = "start_summarization"
     description: str = "Generate summary for a transcribed meeting. Requires meeting_id. Meeting must be transcribed first."
     meeting_id: int = Field(description="The ID of the meeting to summarize")
+    parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -119,6 +124,7 @@ class SendFollowupEmailTool(BaseTool):
     description: str = "Send follow-up email with meeting summary to all participants. Requires meeting_id."
     meeting_id: int = Field(description="The ID of the meeting")
     subject: str = Field(default=None, description="Optional custom email subject")
+    parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -144,6 +150,7 @@ class CreateMeetingTool(BaseTool):
     audio_url: str = Field(description="URL to the audio file")
     participant_names: str = Field(default="", description="Comma-separated list of participant names")
     participant_emails: str = Field(default="", description="Comma-separated list of participant emails")
+    parameters: dict = Field(default_factory=dict, description="Tool parameters")
 
     async def execute(self) -> str:
         session = get_sync_session()
@@ -177,7 +184,11 @@ def get_meeting_tools():
 
 
 def create_meeting_agent():
-    llm = ChatBot(model_name="gpt-4.1", llm_provider="openai")
+    llm = ChatBot(
+        model_name="openai/gpt-3.5-turbo",
+        llm_provider="openrouter",
+        llm_api_key=settings.openrouter_api_key,
+    )
     agent = SpoonReactAI(
         llm=llm,
         tools=get_meeting_tools(),

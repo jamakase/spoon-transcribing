@@ -14,6 +14,14 @@ class Meeting(Base):
     audio_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     audio_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
+
+    # Streaming bot fields
+    zoom_meeting_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    zoom_meeting_uuid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_streaming: Mapped[bool] = mapped_column(default=False)
+    bot_joined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bot_left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     transcript: Mapped["Transcript | None"] = relationship(back_populates="meeting", uselist=False)

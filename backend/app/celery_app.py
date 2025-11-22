@@ -6,7 +6,12 @@ celery_app = Celery(
     "meeting_summarizer",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks.transcription", "app.tasks.summarization", "app.tasks.email"]
+    include=[
+        "app.tasks.transcription",
+        "app.tasks.summarization",
+        "app.tasks.email",
+        "app.tasks.zoom_bot",
+    ]
 )
 
 celery_app.conf.update(

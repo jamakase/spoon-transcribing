@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ async def chat(request: ChatRequest):
             break
 
     if not user_message:
-        return {"error": "No user message found"}
+        raise HTTPException(status_code=400, detail="No user message found")
 
     async def generate():
         try:
@@ -68,7 +68,7 @@ async def chat_non_streaming(request: ChatRequest):
             break
 
     if not user_message:
-        return {"error": "No user message found"}
+        raise HTTPException(status_code=400, detail="No user message found")
 
     response = await agent.run(user_message)
 

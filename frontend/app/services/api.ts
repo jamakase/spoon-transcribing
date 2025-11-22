@@ -71,21 +71,24 @@ export const api = {
 
   async startRecallBot(url: string, title: string = 'Meeting Recording', publicKey?: string): Promise<any> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
     if (publicKey) {
       headers['x-user-pubkey'] = publicKey;
     }
 
-    const res = await fetch(`${API_BASE_URL}/recall/start`, {
+    const formData = new FormData();
+    formData.append('meeting_url', url);
+    formData.append('title', title);
+
+    const res = await fetch(`${API_BASE_URL}/meetings`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ url, title }),
+      body: formData,
     });
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.detail?.[0]?.msg || 'Failed to start bot');
+      throw new Error(errorData.detail?.[0]?.msg || errorData.detail || 'Failed to start bot');
     }
     return res.json();
   }

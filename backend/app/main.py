@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import meetings, chat, zoom, streaming, recall
+from app.api.routes import meetings, chat, zoom, streaming, recall, twins
 
 app = FastAPI(title="Meeting Notes Summarizer", version="1.0.0")
 
@@ -17,6 +17,7 @@ app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(zoom.router, prefix="/zoom", tags=["zoom"])
 app.include_router(streaming.router, prefix="/streaming", tags=["streaming"])
 app.include_router(recall.router, prefix="/recall", tags=["recall"])
+app.include_router(twins.router, prefix="/api", tags=["twins"])
 
 
 @app.get("/health")

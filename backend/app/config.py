@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     recall_webhook_secret: str = ""
     recall_bot_image_url: str = "https://raw.githubusercontent.com/jamakase/spoon-transcribing/master/frontend/public/wipedoslogo.png"
 
+    # HeyGen
+    heygen_api_key: str = ""
+
     class Config:
         env_file = ".env"
         extra = "ignore"

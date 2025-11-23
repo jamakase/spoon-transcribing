@@ -7,7 +7,8 @@ import {
   FileBarChart, 
   Zap, 
   Wallet,
-  Settings
+  Settings,
+  Bot
 } from 'lucide-react';
 import { useNeoWallet } from '../context/NeoWalletContext';
 
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { label: 'Record Now', href: '/record', icon: Mic },
   { label: 'Search', href: '/search', icon: Search },
   { label: 'AI Reports', href: '/reports', icon: FileBarChart },
+  { label: 'Digital Twins', href: '/digital-twins', icon: Bot },
   { label: 'Integrations', href: '/integrations', icon: Zap },
 ];
 

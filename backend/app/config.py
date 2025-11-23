@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     recall_region: str = "us-east-1"
     recall_base_url: str = "https://us-east-1.recall.ai/api/v1"
     recall_webhook_secret: str = ""
+    recall_bot_image_url: str = "https://raw.githubusercontent.com/jamakase/spoon-transcribing/master/frontend/public/wipedoslogo.png"
 
     class Config:
         env_file = ".env"

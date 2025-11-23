@@ -22,13 +22,16 @@ class RecallService:
         }
         payload = {
             "meeting_url": meeting_url,
+            "bot_name": bot_name or "wiped.os",
             "recording_config": {
                 "video_mixed_mp4": {},
                 "audio_mixed_mp3": {},
             },
         }
-        if bot_name:
-            payload["bot_name"] = bot_name
+        # Set bot image if configured
+        bot_image_url = getattr(settings, 'recall_bot_image_url', None)
+        if bot_image_url:
+            payload["bot_image"] = bot_image_url
         if external_id:
             payload["external_id"] = external_id
 

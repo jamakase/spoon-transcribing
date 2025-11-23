@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bot, Brain, Sparkles, Activity, Loader2, User } from 'lucide-react';
 
-const API_BASE_URL = 'https://api.transcribe.aprivai.com';
+const API_BASE_URL = '/api/proxy';
 
 interface Avatar {
   avatar_id: string;

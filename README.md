@@ -1,6 +1,11 @@
+![Spoon Transcribing Logo](https://raw.githubusercontent.com/jamakase/spoon-transcribing/master/frontend/public/wipedoslogo.png)
+
 # Spoon Transcribing - AI-Powered Meeting Intelligence Platform with Neo Blockchain Integration
 
 Spoon Transcribing is a comprehensive meeting intelligence platform that combines blockchain technology, AI transcription, and multiple recording methods to provide seamless meeting capture, transcription, and analysis capabilities.
+
+## 🎥 Hackathon Demo
+[![Watch the Demo](https://img.youtube.com/vi/ecP7iNtFmBI/0.jpg)](https://youtu.be/ecP7iNtFmBI)
 
 ## 🚀 Key Features
 
